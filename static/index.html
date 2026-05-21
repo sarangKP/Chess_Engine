@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess Engine</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+
+  h1 { font-size: 1.4rem; color: #a8d8ea; margin-bottom: 16px; letter-spacing: 1px; }
+
+  /* Controls bar */
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 18px;
+    background: #16213e;
+    padding: 12px 18px;
+    border-radius: 10px;
+  }
+
+  .control-group { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+  .control-group label { color: #a0a0b0; }
+
+  .radio-group { display: flex; gap: 12px; }
+  .radio-group label {
+    display: flex; align-items: center; gap: 4px;
+    cursor: pointer; color: #c0c0d0; font-size: 0.85rem;
+  }
+  .radio-group input[type="radio"] { accent-color: #a8d8ea; }
+
+  input[type="range"] {
+    width: 120px; accent-color: #a8d8ea; cursor: pointer;
+  }
+
+  #elo-display {
+    min-width: 38px; text-align: center;
+    background: #0f3460; padding: 2px 6px;
+    border-radius: 4px; font-weight: 600; color: #a8d8ea;
+  }
+
+  button {
+    background: #0f3460; color: #a8d8ea;
+    border: 1px solid #a8d8ea; border-radius: 6px;
+    padding: 7px 18px; cursor: pointer; font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+  button:hover { background: #1a4a80; }
+
+  /* Connection dot */
+  #conn-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #ff4444; display: inline-block;
+    transition: background 0.3s;
+  }
+  #conn-dot.connected { background: #44cc44; }
+
+  /* Main layout */
+  .game-area {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+
+  /* Board */
+  .board-wrap { position: relative; }
+
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: 480px; height: 480px;
+    border: 3px solid #0f3460;
+    border-radius: 4px;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  .sq {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.6rem; cursor: pointer;
+    transition: background 0.1s;
+    position: relative;
+  }
+  .sq.light { background: #f0d9b5; }
+  .sq.dark  { background: #b58863; }
+  .sq.selected { background: #f6f669 !important; }
+  .sq.last-move { background: #cdd16f !important; }
+  .sq.last-move.dark { background: #aaa23a !important; }
+
+  .sq.flash-error { animation: flash 0.35s ease; }
+  @keyframes flash {
+    0%,100% { background: inherit; }
+    50% { background: #e74c3c !important; }
+  }
+
+  /* Rank/file labels */
+  .board-labels {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: 480px;
+  }
+  .file-label { text-align: center; font-size: 0.7rem; color: #607080; padding-top: 2px; }
+
+  .rank-labels {
+    display: flex; flex-direction: column;
+    justify-content: space-around;
+    height: 480px;
+    padding: 0 4px;
+  }
+  .rank-label { font-size: 0.7rem; color: #607080; line-height: 1; }
+
+  .board-row { display: flex; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+
+  .panel {
+    background: #16213e;
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .panel-title {
+    font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: 1px; color: #607080; margin-bottom: 8px;
+  }
+
+  #status-text {
+    font-size: 0.9rem; font-weight: 600; color: #e0e0e0;
+  }
+
+  #engine-status {
+    font-size: 0.78rem; color: #80a0c0; margin-top: 6px;
+    min-height: 1.2em;
+  }
+
+  #move-list {
+    font-size: 0.78rem; color: #c0c0d0;
+    max-height: 260px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .move-pair { display: flex; gap: 8px; }
+  .move-num { color: #607080; min-width: 22px; }
+  .move-uci { font-family: monospace; }
+
+  #captured-text {
+    font-size: 1.1rem; letter-spacing: 2px; min-height: 1.4em;
+  }
+
+  /* Game-over overlay */
+  #overlay {
+    display: none;
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.75);
+    border-radius: 4px;
+    flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 14px;
+    z-index: 10;
+  }
+  #overlay.show { display: flex; }
+  #overlay-title { font-size: 1.5rem; font-weight: 700; color: #f0d9b5; }
+  #overlay-sub { font-size: 0.9rem; color: #c0c0c0; }
+</style>
+</head>
+<body>
+
+<h1>♟ Chess Engine</h1>
+
+<div class="controls">
+  <div class="control-group">
+    <span id="conn-dot"></span>
+    <span id="conn-label" style="font-size:0.78rem;color:#607080">disconnected</span>
+  </div>
+
+  <div class="control-group">
+    <label>Play as</label>
+    <div class="radio-group">
+      <label><input type="radio" name="color" value="white" checked> White</label>
+      <label><input type="radio" name="color" value="black"> Black</label>
+    </div>
+  </div>
+
+  <div class="control-group">
+    <label>Opponent ELO</label>
+    <input type="range" id="elo-slider" min="100" max="3200" step="50" value="1500">
+    <span id="elo-display">1500</span>
+  </div>
+
+  <button id="new-game-btn">New Game</button>
+</div>
+
+<div class="game-area">
+  <div style="display:flex;gap:0">
+    <div class="rank-labels" id="rank-labels">
+      <span class="rank-label">8</span><span class="rank-label">7</span>
+      <span class="rank-label">6</span><span class="rank-label">5</span>
+      <span class="rank-label">4</span><span class="rank-label">3</span>
+      <span class="rank-label">2</span><span class="rank-label">1</span>
+    </div>
+    <div>
+      <div class="board-wrap">
+        <div id="board"></div>
+        <div id="overlay">
+          <div id="overlay-title">Game Over</div>
+          <div id="overlay-sub"></div>
+          <button id="rematch-btn">Rematch</button>
+        </div>
+      </div>
+      <div class="board-labels" id="file-labels">
+        <span class="file-label">a</span><span class="file-label">b</span>
+        <span class="file-label">c</span><span class="file-label">d</span>
+        <span class="file-label">e</span><span class="file-label">f</span>
+        <span class="file-label">g</span><span class="file-label">h</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="panel">
+      <div class="panel-title">Status</div>
+      <div id="status-text">Waiting for game…</div>
+      <div id="engine-status"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Moves</div>
+      <div id="move-list"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Captured</div>
+      <div id="captured-text"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Piece maps ────────────────────────────────────────────────────────────────
+const UNICODE = {
+  K:'♔', Q:'♕', R:'♖', B:'♗', N:'♘', P:'♙',
+  k:'♚', q:'♛', r:'♜', b:'♝', n:'♞', p:'♟'
+};
+
+const PIECE_COLOR = { K:'w',Q:'w',R:'w',B:'w',N:'w',P:'w', k:'b',q:'b',r:'b',b:'b',n:'b',p:'b' };
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let ws = null;
+let board = Array(64).fill(null);   // null | FEN letter string
+let selected = null;                // square index | null
+let lastMove = null;                // {from, to} | null
+let playerColor = 'white';
+let gameActive = false;
+let myTurn = false;
+
+// ── FEN parsing ───────────────────────────────────────────────────────────────
+function fenToBoard(fen) {
+  const ranks = fen.split(' ')[0].split('/');
+  const b = Array(64).fill(null);
+  ranks.forEach((rank, r) => {
+    let f = 0;
+    for (const ch of rank) {
+      if (ch >= '1' && ch <= '8') { f += parseInt(ch); }
+      else { b[r * 8 + f] = ch; f++; }
+    }
+  });
+  return b;
+}
+
+// ── Coordinate helpers ────────────────────────────────────────────────────────
+function idxToAlg(idx) {
+  const file = String.fromCharCode(97 + (idx % 8));
+  const rank = 8 - Math.floor(idx / 8);
+  return file + rank;
+}
+
+function algToIdx(alg) {
+  const f = alg.charCodeAt(0) - 97;
+  const r = 8 - parseInt(alg[1]);
+  return r * 8 + f;
+}
+
+// Display index may be flipped when playing Black
+function displayIdx(sq) {
+  return playerColor === 'black' ? 63 - sq : sq;
+}
+
+// ── Render board ──────────────────────────────────────────────────────────────
+function renderBoard() {
+  const el = document.getElementById('board');
+  el.innerHTML = '';
+
+  for (let di = 0; di < 64; di++) {
+    const sq = displayIdx(di);
+    const row = Math.floor(di / 8);
+    const col = di % 8;
+    const isLight = (row + col) % 2 === 0;
+
+    const cell = document.createElement('div');
+    cell.className = 'sq ' + (isLight ? 'light' : 'dark');
+    cell.dataset.sq = sq;
+
+    if (selected === sq) cell.classList.add('selected');
+    if (lastMove && (lastMove.from === sq || lastMove.to === sq))
+      cell.classList.add('last-move');
+
+    const piece = board[sq];
+    if (piece) cell.textContent = UNICODE[piece] || '';
+
+    cell.addEventListener('click', () => onSquareClick(sq));
+    el.appendChild(cell);
+  }
+
+  // Update rank labels direction
+  const rankLabels = document.getElementById('rank-labels');
+  const ranks = playerColor === 'black'
+    ? ['1','2','3','4','5','6','7','8']
+    : ['8','7','6','5','4','3','2','1'];
+  rankLabels.querySelectorAll('.rank-label').forEach((el, i) => el.textContent = ranks[i]);
+
+  // Update file labels direction
+  const fileLabels = document.getElementById('file-labels');
+  const files = playerColor === 'black'
+    ? ['h','g','f','e','d','c','b','a']
+    : ['a','b','c','d','e','f','g','h'];
+  fileLabels.querySelectorAll('.file-label').forEach((el, i) => el.textContent = files[i]);
+}
+
+// ── Move input ────────────────────────────────────────────────────────────────
+function onSquareClick(sq) {
+  if (!gameActive || !myTurn) return;
+
+  const piece = board[sq];
+
+  if (selected === null) {
+    // Select a piece of the player's color
+    if (!piece) return;
+    const isWhitePiece = piece === piece.toUpperCase();
+    if (playerColor === 'white' && !isWhitePiece) return;
+    if (playerColor === 'black' &&  isWhitePiece) return;
+    selected = sq;
+    renderBoard();
+  } else {
+    if (selected === sq) {
+      // Deselect
+      selected = null;
+      renderBoard();
+      return;
+    }
+    // Re-select own piece
+    const isWhitePiece = piece && piece === piece.toUpperCase();
+    const clickedOwn = piece && (
+      (playerColor === 'white' && isWhitePiece) ||
+      (playerColor === 'black' && !isWhitePiece)
+    );
+    if (clickedOwn) {
+      selected = sq;
+      renderBoard();
+      return;
+    }
+    // Submit move
+    const from = idxToAlg(selected);
+    const to   = idxToAlg(sq);
+    let uci = from + to;
+
+    // Auto-promote to queen
+    const movingPiece = board[selected];
+    if (movingPiece === 'P' && to[1] === '8') uci += 'q';
+    if (movingPiece === 'p' && to[1] === '1') uci += 'q';
+
+    selected = null;
+    sendWS('move.submit', { uci });
+  }
+}
+
+// ── WebSocket event handlers ──────────────────────────────────────────────────
+function onGameState(data) {
+  board = fenToBoard(data.fen);
+  gameActive = data.active && data.status === 'active';
+
+  const turn = data.turn; // 'white' | 'black'
+  myTurn = gameActive && turn === playerColor;
+
+  // Status text
+  const turnLabel = turn.charAt(0).toUpperCase() + turn.slice(1);
+  document.getElementById('status-text').textContent =
+    gameActive
+      ? (data.is_check ? `⚠ ${turnLabel} to move (Check!)` : `${turnLabel} to move`)
+      : (data.status === 'ended' ? 'Game ended' : data.status);
+
+  // Move list
+  const ml = document.getElementById('move-list');
+  ml.innerHTML = '';
+  const history = data.move_history || [];
+  for (let i = 0; i < history.length; i += 2) {
+    const pair = document.createElement('div');
+    pair.className = 'move-pair';
+    pair.innerHTML =
+      `<span class="move-num">${Math.floor(i/2)+1}.</span>` +
+      `<span class="move-uci">${history[i] || ''}</span>` +
+      `<span class="move-uci">${history[i+1] || ''}</span>`;
+    ml.appendChild(pair);
+  }
+  ml.scrollTop = ml.scrollHeight;
+
+  // Captured
+  const cap = (data.captured_pieces || []).map(p => {
+    const letter = p[0].toUpperCase();
+    return UNICODE[playerColor === 'white' ? letter.toLowerCase() : letter] || p;
+  });
+  document.getElementById('captured-text').textContent = cap.join(' ') || '—';
+
+  // Last move highlight
+  if (history.length > 0) {
+    const last = history[history.length - 1];
+    lastMove = { from: algToIdx(last.slice(0,2)), to: algToIdx(last.slice(2,4)) };
+  } else {
+    lastMove = null;
+  }
+
+  // Clear engine status on new game
+  if (history.length === 0) document.getElementById('engine-status').textContent = '';
+
+  renderBoard();
+}
+
+function onEngineThinking(data) {
+  const score = data.score_cp != null
+    ? (data.score_cp >= 0 ? '+' : '') + (data.score_cp / 100).toFixed(2)
+    : (data.score_mate != null ? `#${data.score_mate}` : '');
+  document.getElementById('engine-status').textContent =
+    `Thinking… depth ${data.depth}${score ? ', ' + score : ''}`;
+}
+
+function onEngineBestmove(data) {
+  document.getElementById('engine-status').textContent =
+    `Engine plays: ${data.san} (${data.uci})`;
+}
+
+function onGameOver(data) {
+  gameActive = false; myTurn = false;
+  const result = data.result || 'ended';
+  const winner = data.winner;
+  document.getElementById('overlay-title').textContent =
+    result === 'checkmate' ? '♟ Checkmate' :
+    result === 'stalemate' ? '½ Stalemate' :
+    result === 'draw'      ? '½ Draw' :
+    result === 'resign'    ? '🏳 Resigned' : 'Game Over';
+  document.getElementById('overlay-sub').textContent =
+    winner ? `${winner.charAt(0).toUpperCase() + winner.slice(1)} wins` : '';
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('status-text').textContent = 'Game over';
+  document.getElementById('engine-status').textContent = '';
+}
+
+function onMoveIllegal(data) {
+  document.getElementById('engine-status').textContent = `Illegal: ${data.reason}`;
+  selected = null;
+  // Flash all squares briefly
+  document.querySelectorAll('.sq').forEach(el => {
+    el.classList.add('flash-error');
+    el.addEventListener('animationend', () => el.classList.remove('flash-error'), { once: true });
+  });
+  renderBoard();
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function connect() {
+  const url = 'ws://' + window.location.host + '/ws';
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    document.getElementById('conn-dot').classList.add('connected');
+    document.getElementById('conn-label').textContent = 'connected';
+  };
+
+  ws.onclose = () => {
+    document.getElementById('conn-dot').classList.remove('connected');
+    document.getElementById('conn-label').textContent = 'reconnecting…';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    const { event, data } = msg;
+
+    if (event === 'game.state')      onGameState(data);
+    else if (event === 'engine.thinking') onEngineThinking(data);
+    else if (event === 'engine.bestmove') onEngineBestmove(data);
+    else if (event === 'game.over')   onGameOver(data);
+    else if (event === 'move.illegal') onMoveIllegal(data);
+    else if (event === 'engine.ready') {
+      document.getElementById('engine-status').textContent =
+        data.alive ? 'Engine ready' : 'Engine unavailable';
+    }
+    else if (event === 'engine.error') {
+      document.getElementById('engine-status').textContent = `Error: ${data.message}`;
+    }
+  };
+}
+
+function sendWS(event, data = {}) {
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ event, data }));
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('elo-slider').addEventListener('input', function() {
+  document.getElementById('elo-display').textContent = this.value;
+});
+
+document.querySelectorAll('input[name="color"]').forEach(r => {
+  r.addEventListener('change', function() { playerColor = this.value; renderBoard(); });
+});
+
+document.getElementById('new-game-btn').addEventListener('click', () => {
+  const color = document.querySelector('input[name="color"]:checked').value;
+  const elo   = parseInt(document.getElementById('elo-slider').value);
+  playerColor = color;
+  selected = null; lastMove = null;
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('engine-status').textContent = '';
+  sendWS('game.new', { color, elo });
+});
+
+document.getElementById('rematch-btn').addEventListener('click', () => {
+  document.getElementById('new-game-btn').click();
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+renderBoard();
+connect();
+</script>
+</body>
+</html>

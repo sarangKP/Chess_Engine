@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from api.rest import router as game_router, engine_router
 from api.websocket import ConnectionManager, ws_endpoint
@@ -38,6 +39,8 @@ def create_app() -> FastAPI:
     app.include_router(game_router, prefix="/game", tags=["game"])
     app.include_router(engine_router, prefix="/engine", tags=["engine"])
     app.add_api_websocket_route("/ws", ws_endpoint)
+
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
     return app
 
