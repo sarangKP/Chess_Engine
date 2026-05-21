@@ -186,10 +186,55 @@ WebSocket connections are tracked in `ConnectionManager._connections`. All broad
 
 ## LLM Integration
 
-Expose the REST endpoints as tools. A typical agent turn looks like:
+**Yes — the endpoints are directly usable by any LLM agent framework** (Claude tool use, OpenAI function calling, LangChain, LlamaIndex, etc.). No changes to this service are required.
 
-1. `GET /game/state` — read the board (FEN + move history).
-2. Optionally `POST /game/move/evaluate` — reason about candidate moves.
-3. `POST /game/move` with a chosen UCI move **or** `GET /game/move/best` to delegate to Stockfish.
+### How it works
 
-The LLM never needs to speak UCI or parse FEN directly — the state response includes all derived fields.
+Expose the four key REST endpoints as tools in your LLM's tool definition. The agent then drives the game entirely through HTTP calls:
+
+| Tool (endpoint) | What the LLM uses it for |
+|---|---|
+| `GET /game/state` | Read the board — returns FEN, move history, whose turn, check/checkmate, captured pieces |
+| `POST /game/move` | Play a move — validates legality, returns SAN notation and updated state |
+| `GET /game/move/best` | Ask Stockfish for the best move + centipawn score + principal variation |
+| `POST /game/move/evaluate` | Evaluate any position by FEN — useful for the LLM to reason about candidate moves |
+
+### What the LLM can do with this
+
+Because `game.state` returns the full move history in UCI notation, the LLM can:
+- **Recognise openings** — e.g. `["e2e4","e7e5","g1f3","b1c3","f1c4"]` is the Italian Opening
+- **Generate natural commentary** — *"You played the Italian — I'll counter with the Classical Defence"*
+- **Reason about tactics** — use `evaluate` to compare candidate moves before committing
+- **Act as opponent or coach** — either play its own moves or just comment on Stockfish's moves
+
+### Minimal tool definition (Claude / Anthropic SDK example)
+
+```python
+tools = [
+    {
+        "name": "get_game_state",
+        "description": "Returns the current chess board state: FEN, move history, whose turn, check/checkmate status.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "play_move",
+        "description": "Play a move on the board. Input must be UCI notation (e.g. 'e2e4'). Returns updated board state.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"uci": {"type": "string", "description": "Move in UCI notation, e.g. 'e2e4'"}},
+            "required": ["uci"],
+        },
+    },
+    {
+        "name": "get_best_move",
+        "description": "Ask Stockfish for the best move in the current position. Returns move, score, and continuation.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+```
+
+Map each tool name to its corresponding HTTP call against `http://localhost:8000`.
+
+### WebSocket alternative
+
+For real-time integration (e.g. streaming commentary as Stockfish thinks), connect to `ws://localhost:8000/ws` instead. The agent receives `engine.thinking` events (progressive depth updates) and `game.state` after every move automatically — no polling needed.
