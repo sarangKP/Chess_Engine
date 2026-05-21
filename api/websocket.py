@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+import chess
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
@@ -55,24 +56,33 @@ async def ws_endpoint(ws: WebSocket) -> None:
 
             if event == "game.new":
                 color = data.get("color", "white")
+                if color not in ("white", "black"):
+                    color = "white"
                 elo = data.get("elo")
                 depth = data.get("depth", app.state.default_depth)
 
                 if sf.is_alive():
-                    if elo:
+                    if elo is not None:
                         await sf.set_option("UCI_LimitStrength", "true")
                         await sf.set_option("UCI_Elo", str(elo))
                     else:
                         await sf.set_option("UCI_LimitStrength", "false")
                     await sf.new_game()
 
-                state = gsm.new_game(player_color=color)
+                state = await gsm.new_game(player_color=color)
                 app.state.default_depth = depth
                 await mgr.broadcast({"event": "game.state", "data": state})
 
             elif event == "move.submit":
                 uci = data.get("uci", "")
-                result = gsm.make_move(uci)
+                if not isinstance(uci, str) or not (4 <= len(uci) <= 5):
+                    await mgr.send(ws, {
+                        "event": "move.illegal",
+                        "data": {"uci": uci, "reason": "Malformed UCI"},
+                    })
+                    continue
+
+                result = await gsm.make_move(uci)
 
                 if not result["ok"]:
                     await mgr.send(ws, {
@@ -91,12 +101,11 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     })
                     continue
 
-                # If it's now the engine's turn, run Stockfish
                 if gsm.is_engine_turn():
                     await _run_engine_turn(app, mgr, gsm, sf)
 
             elif event == "game.resign":
-                gsm.end_game("resign")
+                await gsm.end_game("resign")
                 await mgr.broadcast({
                     "event": "game.over",
                     "data": {"result": "resign", "winner": None},
@@ -107,12 +116,12 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 elo = data.get("elo")
                 threads = data.get("threads")
                 if sf.is_alive():
-                    if threads:
+                    if threads is not None:
                         await sf.set_option("Threads", str(threads))
-                    if elo:
+                    if elo is not None:
                         await sf.set_option("UCI_LimitStrength", "true")
                         await sf.set_option("UCI_Elo", str(elo))
-                if depth:
+                if depth is not None:
                     app.state.default_depth = depth
                 await mgr.send(ws, {"event": "engine.configured", "data": {"engine_alive": sf.is_alive()}})
 
@@ -144,8 +153,6 @@ async def _run_engine_turn(app, mgr: ConnectionManager, gsm, sf) -> None:
     if not best_uci or best_uci == "(none)":
         return
 
-    # Convert UCI to SAN before applying the move
-    import chess
     try:
         san = gsm.board.san(gsm.board.parse_uci(best_uci))
     except Exception:
@@ -163,7 +170,7 @@ async def _run_engine_turn(app, mgr: ConnectionManager, gsm, sf) -> None:
         },
     })
 
-    move_result = gsm.make_move(best_uci)
+    move_result = await gsm.make_move(best_uci)
     if move_result["ok"]:
         await mgr.broadcast({"event": "game.state", "data": gsm.get_state()})
         over = gsm.is_game_over()

@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import os
 import re
 from asyncio.subprocess import PIPE
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 STOCKFISH_PATH = os.environ.get("STOCKFISH_PATH", "/usr/games/stockfish")
 
@@ -16,7 +19,6 @@ class StockfishManager:
 
     async def start(self) -> None:
         await self._spawn()
-        self._ever_started = True
 
     async def stop(self) -> None:
         if self._proc and self._proc.returncode is None:
@@ -35,15 +37,24 @@ class StockfishManager:
             self._path,
             stdin=PIPE,
             stdout=PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=PIPE,
         )
+        asyncio.create_task(self._drain_stderr())
         await self._send("uci")
         await self._read_until("uciok")
         self._ever_started = True
 
+    async def _drain_stderr(self) -> None:
+        try:
+            while True:
+                line = await self._proc.stderr.readline()
+                if not line:
+                    break
+                logger.warning("stockfish stderr: %s", line.decode().rstrip())
+        except Exception:
+            pass
+
     async def _ensure_alive(self) -> None:
-        # Only auto-restart if we successfully started before (process crashed).
-        # If the binary was never found, don't keep retrying.
         if not self.is_alive():
             if self._ever_started:
                 await self._spawn()
@@ -57,11 +68,20 @@ class StockfishManager:
         self._proc.stdin.write((cmd + "\n").encode())
         await self._proc.stdin.drain()
 
+    async def _readline(self, timeout: float) -> str:
+        line_bytes = await asyncio.wait_for(
+            self._proc.stdout.readline(), timeout=timeout
+        )
+        if not line_bytes:  # EOF — process died
+            self._ever_started = False
+            raise RuntimeError("Stockfish process terminated unexpectedly")
+        return line_bytes.decode().strip()
+
     async def _read_until(self, token: str, timeout: float = 10.0) -> list[str]:
         lines: list[str] = []
-        deadline = asyncio.get_event_loop().time() + timeout
+        deadline = asyncio.get_running_loop().time() + timeout
         while True:
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 raise TimeoutError(f"Stockfish did not respond with '{token}'")
             line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=remaining)
@@ -88,6 +108,8 @@ class StockfishManager:
 
     async def set_option(self, name: str, value: str) -> None:
         await self._ensure_alive()
+        name = name.replace("\n", "").replace("\r", "")
+        value = str(value).replace("\n", "").replace("\r", "")
         await self._send(f"setoption name {name} value {value}")
 
     async def get_best_move(
@@ -97,6 +119,7 @@ class StockfishManager:
         thinking_callback=None,
     ) -> dict:
         await self._ensure_alive()
+        line_timeout = depth * 3 + 15
         async with self._search_lock:
             if move_history:
                 await self._send(f"position startpos moves {' '.join(move_history)}")
@@ -112,7 +135,7 @@ class StockfishManager:
             last_depth = 0
 
             while True:
-                line = (await self._proc.stdout.readline()).decode().strip()
+                line = await self._readline(timeout=line_timeout)
                 if not line:
                     continue
 
@@ -128,12 +151,15 @@ class StockfishManager:
                     if "pv" in parsed:
                         pv = parsed["pv"]
                     if thinking_callback and last_depth > 0:
-                        await thinking_callback({
-                            "depth": last_depth,
-                            "score_cp": score_cp,
-                            "score_mate": score_mate,
-                            "pv": pv[:3],
-                        })
+                        try:
+                            await thinking_callback({
+                                "depth": last_depth,
+                                "score_cp": score_cp,
+                                "score_mate": score_mate,
+                                "pv": pv[:3],
+                            })
+                        except Exception:
+                            pass
 
                 elif line.startswith("bestmove"):
                     parts = line.split()
@@ -150,17 +176,19 @@ class StockfishManager:
 
     async def evaluate_position(self, fen: str, depth: int = 15) -> dict:
         await self._ensure_alive()
+        line_timeout = depth * 3 + 15
         async with self._search_lock:
             await self._send(f"position fen {fen}")
             await self._send(f"go depth {depth}")
 
+            best_move: Optional[str] = None
             score_cp: Optional[int] = None
             score_mate: Optional[int] = None
             pv: list[str] = []
             last_depth = 0
 
             while True:
-                line = (await self._proc.stdout.readline()).decode().strip()
+                line = await self._readline(timeout=line_timeout)
                 if not line:
                     continue
                 if line.startswith("info depth"):
