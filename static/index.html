@@ -104,6 +104,17 @@
   .sq.last-move.light { background: #d8d8a8 !important; }
   .sq.last-move.dark  { background: #7a7a50 !important; }
 
+  .piece-w {
+    color: #ffffff;
+    text-shadow: 1px 1px 0 #000, -1px 1px 0 #000,
+                 1px -1px 0 #000, -1px -1px 0 #000;
+  }
+  .piece-b {
+    color: #111111;
+    text-shadow: 1px 1px 0 #fff, -1px 1px 0 #fff,
+                 1px -1px 0 #fff, -1px -1px 0 #fff;
+  }
+
   .sq.flash-error { animation: flash 0.35s ease; }
   @keyframes flash {
     0%,100% { background: inherit; }
@@ -324,7 +335,12 @@ function renderBoard() {
       cell.classList.add('last-move');
 
     const piece = board[sq];
-    if (piece) cell.textContent = UNICODE[piece] || '';
+    if (piece) {
+      const span = document.createElement('span');
+      span.className = PIECE_COLOR[piece] === 'w' ? 'piece-w' : 'piece-b';
+      span.textContent = UNICODE[piece] || '';
+      cell.appendChild(span);
+    }
 
     cell.addEventListener('click', () => onSquareClick(sq));
     el.appendChild(cell);
